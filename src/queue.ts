@@ -1,7 +1,7 @@
 import Redis from "ioredis";
 import { EventEmitter } from "events";
 import { convertToJSONString, delay, formatMessageQueueKey } from "./utils";
-import { Job, JobStatuses } from "./Job";
+import { Job, JobStatuses } from "./job";
 
 const MAX_REDIS_FAILURE_RETRY_DELAY_IN_MS = 30000;
 const MAX_RETRIES = 5;

@@ -1,6 +1,6 @@
 import { sleep } from "bun";
 import Redis from "ioredis";
-import { Queue } from "./Queue";
+import { Queue } from "./queue";
 
 type Payload = {
   id: number;

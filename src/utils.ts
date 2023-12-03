@@ -1,5 +1,4 @@
-import Redis from "ioredis";
-import { Job, JobStatuses } from "./Job";
+import { JobStatuses } from "./job";
 
 const MQ_PREFIX = "UpstashMQ";
 
