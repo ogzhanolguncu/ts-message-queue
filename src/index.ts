@@ -14,12 +14,13 @@ const queue = new Queue({
 });
 
 async function main() {
-  await generateQueueItems(queue, 20); //   console.log("Sleep starting 5 sec");
+  await generateQueueItems(queue, 20);
+  console.log("Sleep starting 5 sec");
   await sleep(5000);
   await queue.process<Payload>((job) => {
     console.log("Processing job:", job.data);
     sleep(1000);
-  }, 1);
+  }, 3);
 }
 
 main();

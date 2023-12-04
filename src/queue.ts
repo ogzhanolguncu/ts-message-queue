@@ -3,6 +3,10 @@ import { EventEmitter } from "events";
 import { convertToJSONString, delay, formatMessageQueueKey } from "./utils";
 import { Job, JobStatuses } from "./job";
 
+//TODO: Run jobs ins Workers in separate thread
+//TODO: Maybe add pausing and continuing
+//TODO: Add delayed jobs
+//TODO: Improve retry
 const MAX_REDIS_FAILURE_RETRY_DELAY_IN_MS = 30000;
 const MAX_RETRIES = 5;
 
@@ -39,9 +43,10 @@ type Worker = <T>(job: T) => Promise<void>;
 
 export class Queue extends EventEmitter {
   config: QueueConfig;
-  runningJobs = 0;
   concurrency = 0;
   worker: any;
+  running = 0;
+  queued = 0;
 
   constructor(config: QueueConfig) {
     super();
@@ -68,21 +73,23 @@ export class Queue extends EventEmitter {
   ): Promise<void> {
     this.concurrency = concurrency;
     this.worker = worker;
-    this.runningJobs = 0;
+    this.running = 0;
+    this.queued = 1;
+
     this.jobTick(); // Start processing
   }
 
   jobTick() {
-    if (this.runningJobs >= this.concurrency) {
-      // Maximum concurrency reached
-      return;
-    }
-
-    this.runningJobs++;
     this.getNextJob()
       .then(async (jobId) => {
+        this.running += 1;
+        this.queued -= 1;
+        if (this.running + this.queued < this.concurrency) {
+          this.queued += 1;
+          setImmediate(this.jobTick);
+        }
+
         if (!jobId) {
-          this.runningJobs--;
           return;
         }
 
@@ -97,7 +104,6 @@ export class Queue extends EventEmitter {
         console.error("Error in jobTick:", error);
       })
       .finally(() => {
-        this.runningJobs--;
         setImmediate(() => this.jobTick());
       });
   }
@@ -106,6 +112,8 @@ export class Queue extends EventEmitter {
     let hasError = false;
     try {
       await this.worker(jobCreatedById.data);
+      this.running -= 1;
+      this.queued += 1;
     } catch (error) {
       hasError = true;
     } finally {
@@ -125,7 +133,6 @@ export class Queue extends EventEmitter {
       return jobId;
     } catch (error) {
       console.error("Error fetching the next job:", error);
-      this.runningJobs--;
       throw error;
     }
   }
