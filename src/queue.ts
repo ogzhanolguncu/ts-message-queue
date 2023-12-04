@@ -39,11 +39,8 @@ type Worker = <T>(job: T) => Promise<void>;
 
 export class Queue extends EventEmitter {
   config: QueueConfig;
-
   runningJobs = 0;
-  queuedJobs = 0;
   concurrency = 0;
-
   worker: any;
 
   constructor(config: QueueConfig) {
@@ -51,13 +48,13 @@ export class Queue extends EventEmitter {
     this.config = {
       redis: config.redis,
       queueName: config.queueName,
-      keepOnFailure: true,
-      keepOnSuccess: true,
-      retryDelay: 500,
+      keepOnFailure: config.keepOnFailure ?? true,
+      keepOnSuccess: config.keepOnSuccess ?? true,
+      retryDelay: config.retryDelay ?? 500,
     };
   }
 
-  private createQueueKey(key: string) {
+  createQueueKey(key: string) {
     return formatMessageQueueKey(this.config.queueName, key);
   }
 
@@ -71,57 +68,50 @@ export class Queue extends EventEmitter {
   ): Promise<void> {
     this.concurrency = concurrency;
     this.worker = worker;
-
     this.runningJobs = 0;
-    this.queuedJobs = 0;
-    this.fillJobQueue<TJobPayload>();
+    this.jobTick(); // Start processing
   }
 
-  private fillJobQueue<TJobPayload>() {
-    while (this.queuedJobs < this.concurrency - this.runningJobs) {
-      this.queuedJobs++;
-      console.log("JOB QUEUE STARTS");
-      setImmediate(() => this.processNextJob<TJobPayload>());
+  jobTick() {
+    if (this.runningJobs >= this.concurrency) {
+      // Maximum concurrency reached
+      return;
     }
-  }
 
-  private async processNextJob<TJobPayload>() {
-    try {
-      const jobId = await this.getNextJob();
-      if (jobId) {
-        //TODO: This might fail handle this carefully.
-        const jobCreatedById = await new Job<TJobPayload | null>(
-          this.config,
-          null
-        ).fromId<TJobPayload>(jobId);
-        if (!jobCreatedById) {
-          console.error(`Job not found with ID: ${jobId}`);
-          return;
-        }
-
-        let hasError = false;
-        try {
-          await this.worker(jobCreatedById.data);
-        } catch (error) {
-          hasError = true;
-        } finally {
-          //TODO: This might fail handle this
-          const [jobStatus, job] = await this.finishJob<TJobPayload>(jobCreatedById, hasError);
-          this.emit(jobStatus, job.id);
+    this.runningJobs++;
+    this.getNextJob()
+      .then(async (jobId) => {
+        if (!jobId) {
           this.runningJobs--;
           return;
         }
-      }
-    } catch (error) {
-      this.emit("error", (error as Error).message);
 
-      if (MAX_REDIS_FAILURE_RETRY_DELAY_IN_MS === this.config.retryDelay) return null;
-      this.config.retryDelay = this.config.retryDelay! * 2;
-      console.log("retrying here");
-      return delay(this.config.retryDelay).then(() => this.getNextJob());
+        const jobCreatedById = await new Job(this.config, null).fromId(jobId);
+        if (jobCreatedById) {
+          await this.executeJob(jobCreatedById);
+        } else {
+          console.error(`Job not found with ID: ${jobId}`);
+        }
+      })
+      .catch((error) => {
+        console.error("Error in jobTick:", error);
+      })
+      .finally(() => {
+        this.runningJobs--;
+        setImmediate(() => this.jobTick());
+      });
+  }
+
+  private async executeJob<TJobPayload>(jobCreatedById: Job<TJobPayload>) {
+    let hasError = false;
+    try {
+      await this.worker(jobCreatedById.data);
+    } catch (error) {
+      hasError = true;
     } finally {
-      this.runningJobs--;
-      this.fillJobQueue(); // Trigger fetching the next job
+      const [jobStatus, job] = await this.finishJob<TJobPayload>(jobCreatedById, hasError);
+      this.emit(jobStatus, job.id);
+      return;
     }
   }
 
@@ -132,22 +122,11 @@ export class Queue extends EventEmitter {
         this.createQueueKey("active"),
         0
       );
-
-      if (!jobId) {
-        this.queuedJobs--;
-        this.runningJobs--;
-        console.log("No job available in the queue.");
-        return null;
-      }
-
-      this.runningJobs++;
-      this.queuedJobs--;
-
       return jobId;
     } catch (error) {
       console.error("Error fetching the next job:", error);
       this.runningJobs--;
-      throw error; // Re-throw or handle the error as per your application logic
+      throw error;
     }
   }
 
@@ -165,6 +144,7 @@ export class Queue extends EventEmitter {
     if (hasFailed) {
       job.retryCount = job.retryCount + 1;
       if (job.retryCount <= MAX_RETRIES) {
+        //TODO: Need polishing
         delay(500).then(() => multi.rpush(this.createQueueKey("waiting"), JSON.stringify(job)));
       } else {
         job.status = "failed";
@@ -191,5 +171,27 @@ export class Queue extends EventEmitter {
 
     await multi.exec();
     return [job.status, job];
+  }
+
+  async removeJob(jobId: string) {
+    const addJobToQueueScript = await Bun.file("./src/lua-scripts/remove-job.lua").text();
+    return await this.config.redis.eval(
+      addJobToQueueScript,
+      5,
+      this.createQueueKey("succeeded"),
+      this.createQueueKey("failed"),
+      this.createQueueKey("waiting"),
+      this.createQueueKey("active"),
+      this.createQueueKey("jobs"),
+      jobId
+    );
+  }
+
+  async destroy() {
+    const args = ["id", "jobs", "waiting", "active", "succeeded", "failed"].map((key) =>
+      this.createQueueKey(key)
+    );
+    const res = await this.config.redis.del(...args);
+    return res;
   }
 }

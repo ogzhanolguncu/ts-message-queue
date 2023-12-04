@@ -42,7 +42,7 @@ export class Job<T> {
     return job;
   };
 
-  async save(): Promise<void> {
+  async save(): Promise<string | null> {
     const addJobToQueueScript = await Bun.file("./src/lua-scripts/add-job.lua").text();
     const resJobId = (await this.config.redis.eval(
       addJobToQueueScript,
@@ -55,6 +55,8 @@ export class Job<T> {
 
     if (resJobId) {
       this.id = resJobId;
+      return resJobId;
     }
+    return null;
   }
 }

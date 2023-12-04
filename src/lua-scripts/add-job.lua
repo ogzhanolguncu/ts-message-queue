@@ -1,7 +1,7 @@
 --[[
-key 1 -> bq:name:id (job ID counter)
-key 2 -> bq:name:jobs
-key 3 -> bq:name:waiting
+key 1 -> [prefix]:name:id (job ID counter)
+key 2 -> [prefix]:name:jobs
+key 3 -> [prefix]:name:waiting
 arg 1 -> job id
 arg 2 -> job data
 ]]
