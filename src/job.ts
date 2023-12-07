@@ -13,14 +13,12 @@ export class Job<T> {
   status: JobStatuses;
   config: OwnerQueue;
   data: T;
-  retryCount: number;
 
   constructor(ownerConfig: OwnerQueue, data: T, jobId = randomUUID()) {
     this.id = jobId;
     this.status = "created";
     this.data = data;
     this.config = ownerConfig;
-    this.retryCount = 0;
   }
 
   private createQueueKey(key: string) {

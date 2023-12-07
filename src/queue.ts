@@ -1,12 +1,8 @@
-import Redis from "ioredis";
 import { EventEmitter } from "events";
-import { convertToJSONString, delay, formatMessageQueueKey } from "./utils";
+import Redis from "ioredis";
 import { Job, JobStatuses } from "./job";
+import { convertToJSONString, formatMessageQueueKey } from "./utils";
 
-//TODO: Run jobs ins Workers in separate thread
-//TODO: Maybe add pausing and continuing
-//TODO: Add delayed jobs
-//TODO: Improve retry
 const MAX_REDIS_FAILURE_RETRY_DELAY_IN_MS = 30000;
 const MAX_RETRIES = 5;
 
@@ -38,8 +34,6 @@ export type QueueConfig = {
    * */
   keepOnFailure?: boolean;
 };
-
-type Worker = <T>(job: T) => Promise<void>;
 
 export class Queue extends EventEmitter {
   config: QueueConfig;
@@ -143,28 +137,15 @@ export class Queue extends EventEmitter {
   ): Promise<[JobStatuses, Job<TJobPayload>]> {
     const multi = this.config.redis.multi();
 
-    // Remove from active queue
-    multi
-      .lrem(this.createQueueKey("active"), 0, job.id)
-      .srem(this.createQueueKey("stalling"), job.id);
+    multi.lrem(this.createQueueKey("active"), 0, job.id);
 
     if (hasFailed) {
-      job.retryCount = job.retryCount + 1;
-      if (job.retryCount <= MAX_RETRIES) {
-        //TODO: Need polishing
-        delay(500).then(() => multi.rpush(this.createQueueKey("waiting"), JSON.stringify(job)));
+      job.status = "failed";
+      if (this.config.keepOnFailure) {
+        multi.hset(this.createQueueKey("jobs"), job.id, convertToJSONString(job.data, job.status));
+        multi.sadd(this.createQueueKey("failed"), job.id);
       } else {
-        job.status = "failed";
-        if (this.config.keepOnFailure) {
-          multi.hset(
-            this.createQueueKey("jobs"),
-            job.id,
-            convertToJSONString(job.data, job.status)
-          );
-          multi.sadd(this.createQueueKey("failed"), job.id);
-        } else {
-          multi.hdel(this.createQueueKey("jobs"), job.id);
-        }
+        multi.hdel(this.createQueueKey("jobs"), job.id);
       }
     } else {
       if (this.config.keepOnSuccess) {

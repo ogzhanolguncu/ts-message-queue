@@ -8,7 +8,6 @@ type Payload = {
 };
 
 const queue = new Queue({
-  //   redis: new Redis(6379),
   redis: new Redis(process.env.UPSTASH_REDIS_URL!),
   queueName: "mytest-queue",
 });
@@ -17,6 +16,7 @@ async function main() {
   await generateQueueItems(queue, 20);
   console.log("Sleep starting 5 sec");
   await sleep(5000);
+
   await queue.process<Payload>((job) => {
     console.log("Processing job:", job.data);
     sleep(1000);
@@ -34,6 +34,6 @@ async function generateQueueItems(queue: Queue, itemCount: number) {
     };
     // await sleep(1000);
     const jobId = await queue.add(payload);
-    console.log(`Added item ${i} to queue id: ${jobId}`);
+    console.log(`Added item ${i} with jobId: ${jobId}`);
   }
 }
